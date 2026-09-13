@@ -1,0 +1,40 @@
+{
+  "name": "event_booking",
+  "version": "1.0.0",
+  "description": "Concurrent event booking API demonstrating distributed locking and optimistic concurrency control",
+  "main": "dist/src/server.js",
+  "scripts": {
+    "dev": "nodemon src/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/src/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "seed": "ts-node prisma/seed.ts",
+    "migrate": "prisma migrate deploy",
+    "loadtest": "ts-node scripts/loadtest.ts",
+    "db:reset": "ts-node scripts/reset-db.ts",
+    "demo": "ts-node scripts/demo.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "redis": "^6.2.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.4.0",
+    "nodemon": "^3.1.14",
+    "prisma": "^5.22.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "vitest": "3.2.4"
+  }
+}

@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Event Booking — Concurrency Demo</title>
+    <style>
+      :root {
+        --available: #1b7f4b;
+        --held: #b06f00;
+        --booked: #a32020;
+        --mine: #1256b8;
+        --ink: #16181d;
+        --muted: #5b6270;
+        --line: #d6dae2;
+        --bg: #f7f8fa;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 1.5rem;
+        font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+        color: var(--ink);
+        background: var(--bg);
+      }
+      h1 { font-size: 1.35rem; margin: 0 0 .25rem; }
+      .sub { color: var(--muted); margin: 0 0 1.25rem; }
+      .layout { display: grid; grid-template-columns: minmax(0,1fr) 320px; gap: 1.5rem; align-items: start; }
+      @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+      .card {
+        background: #fff; border: 1px solid var(--line);
+        border-radius: 10px; padding: 1rem 1.1rem; margin-bottom: 1rem;
+      }
+      .card h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em;
+        color: var(--muted); margin: 0 0 .75rem; }
+      fieldset { border: 0; margin: 0 0 .85rem; padding: 0; }
+      legend { font-weight: 600; padding: 0; margin-bottom: .35rem; }
+      label { display: inline-flex; align-items: center; gap: .4rem; }
+      input[type="text"] {
+        width: 100%; padding: .5rem .6rem; font: inherit;
+        border: 1px solid var(--line); border-radius: 6px;
+      }
+      .radios { display: flex; gap: 1rem; flex-wrap: wrap; }
+      .grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 6px; }
+      @media (max-width: 560px) { .grid { grid-template-columns: repeat(5, 1fr); } }
+      .seat {
+        aspect-ratio: 1 / 1; border: 2px solid transparent; border-radius: 6px;
+        color: #fff; font: 600 12px/1 system-ui, sans-serif; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .seat:disabled { cursor: not-allowed; }
+      .seat:focus-visible { outline: 3px solid #000; outline-offset: 2px; }
+      .seat.AVAILABLE { background: var(--available); }
+      .seat.HELD { background: var(--held); }
+      .seat.BOOKED { background: var(--booked); }
+      .seat.mine { border-color: var(--mine); box-shadow: 0 0 0 3px rgba(18,86,184,.35); }
+      .legend { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: .85rem;
+        font-size: .85rem; color: var(--muted); }
+      .swatch { display: inline-block; width: .8rem; height: .8rem;
+        border-radius: 3px; vertical-align: -1px; margin-right: .3rem; }
+      dl.stats { display: grid; grid-template-columns: 1fr auto; gap: .3rem .75rem; margin: 0; }
+      dl.stats dt { color: var(--muted); }
+      dl.stats dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
+      dd.bad { color: var(--booked); }
+      dd.good { color: var(--available); }
+      button.action {
+        font: inherit; padding: .5rem .8rem; border-radius: 6px;
+        border: 1px solid var(--line); background: #fff; cursor: pointer;
+      }
+      button.action.primary { background: var(--mine); border-color: var(--mine); color: #fff; }
+      button.action:disabled { opacity: .45; cursor: not-allowed; }
+      .row { display: flex; gap: .5rem; flex-wrap: wrap; }
+      #log { margin: 0; padding: .6rem .7rem; background: #10131a; color: #d8dee9;
+        border-radius: 8px; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace;
+        max-height: 260px; overflow-y: auto; white-space: pre-wrap; }
+      .naive-on { background: #ffe9e9; border-color: #e59a9a; }
+      /* Unmistakable signal while the unsafe path is selected, so a screen
+         recording can never be mistaken for the hardened path. */
+      body.naive-active { background: #fdf1f1; }
+      body.naive-active h1::after {
+        content: " — NAIVE PATH (unsafe)";
+        color: var(--booked);
+        font-size: .8rem;
+        letter-spacing: .04em;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Event Booking — Concurrency Demo</h1>
+    <p class="sub">
+      Open this page in two browser tabs with different user IDs and race for the same seat.
+    </p>
+
+    <div class="layout">
+      <main>
+        <div class="card">
+          <h2>Seat map</h2>
+          <div class="grid" id="grid" role="group" aria-label="Seat map"></div>
+          <p class="legend">
+            <span><span class="swatch" style="background:var(--available)"></span>Available</span>
+            <span><span class="swatch" style="background:var(--held)"></span>Held</span>
+            <span><span class="swatch" style="background:var(--booked)"></span>Booked</span>
+            <span><span class="swatch" style="background:var(--mine)"></span>Your hold</span>
+          </p>
+        </div>
+
+        <div class="card">
+          <h2>Activity</h2>
+          <pre id="log" role="log" aria-live="polite" aria-label="Activity log"></pre>
+        </div>
+      </main>
+
+      <aside>
+        <div class="card">
+          <h2>Session</h2>
+          <fieldset>
+            <legend><label for="userId">User ID</label></legend>
+            <input type="text" id="userId" autocomplete="off" />
+          </fieldset>
+
+          <fieldset>
+            <legend>Booking path</legend>
+            <div class="radios">
+              <label><input type="radio" name="mode" value="safe" checked /> Safe</label>
+              <label><input type="radio" name="mode" value="naive" /> Naive</label>
+            </div>
+          </fieldset>
+          <p class="sub" id="modeNote" style="margin:0;font-size:.85rem">
+            Safe path: Redis lock plus a guarded conditional write.
+          </p>
+        </div>
+
+        <div class="card" id="holdCard">
+          <h2>Your hold</h2>
+          <p id="holdState" style="margin:0 0 .75rem">No active hold. Pick a green seat.</p>
+          <div class="row">
+            <button class="action primary" id="confirmBtn" disabled>Confirm</button>
+            <button class="action" id="releaseBtn" disabled>Release</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Event stats</h2>
+          <dl class="stats" id="stats"></dl>
+        </div>
+      </aside>
+    </div>
+
+    <script>
+      // ---------------------------------------------------------------------
+      // Minimal vanilla client. No build step: this file is served directly by
+      // express.static so the repo stays a backend project with a demo view.
+      // ---------------------------------------------------------------------
+      const state = {
+        eventId: null,
+        seats: [],
+        hold: null, // { bookingId, seatId, expiresAt }
+        countdownTimer: null,
+      };
+
+      const el = {
+        grid: document.getElementById('grid'),
+        log: document.getElementById('log'),
+        userId: document.getElementById('userId'),
+        stats: document.getElementById('stats'),
+        holdState: document.getElementById('holdState'),
+        holdCard: document.getElementById('holdCard'),
+        confirmBtn: document.getElementById('confirmBtn'),
+        releaseBtn: document.getElementById('releaseBtn'),
+        modeNote: document.getElementById('modeNote'),
+      };
+
+      // Each tab gets its own identity by default so two tabs race as two users.
+      el.userId.value =
+        sessionStorage.getItem('userId') ||
+        'user-' + Math.random().toString(36).slice(2, 7);
+      sessionStorage.setItem('userId', el.userId.value);
+      el.userId.addEventListener('change', () =>
+        sessionStorage.setItem('userId', el.userId.value)
+      );
+
+      const mode = () => document.querySelector('input[name="mode"]:checked').value;
+
+      for (const radio of document.querySelectorAll('input[name="mode"]')) {
+        radio.addEventListener('change', () => {
+          const naive = mode() === 'naive';
+          el.modeNote.textContent = naive
+            ? 'Naive path: no lock, no conditional write. Expect the same seat to be handed out repeatedly.'
+            : 'Safe path: Redis lock plus a guarded conditional write.';
+          document.body.classList.toggle('naive-active', naive);
+          el.modeNote.parentElement.classList.toggle('naive-on', naive);
+          log(naive ? 'Switched to NAIVE path (unsafe).' : 'Switched to SAFE path.');
+        });
+      }
+
+      function log(message) {
+        const time = new Date().toLocaleTimeString();
+        el.log.textContent = `[${time}] ${message}\n` + el.log.textContent;
+      }
+
+      async function api(path, options) {
+        const res = await fetch(path, options);
+        const text = await res.text();
+        let body = null;
+        if (text) {
+          try { body = JSON.parse(text); } catch { body = text; }
+        }
+        return { status: res.status, ok: res.ok, body };
+      }
+
+      const post = (path, payload) =>
+        api(path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+      function renderSeats() {
+        el.grid.replaceChildren();
+
+        for (const seat of state.seats) {
+          const button = document.createElement('button');
+          const isMine = state.hold && state.hold.seatId === seat.id;
+
+          button.type = 'button';
+          button.className = `seat ${seat.status}` + (isMine ? ' mine' : '');
+          button.textContent = seat.label.replace(/^Seat\s*/, '');
+          button.disabled = seat.status !== 'AVAILABLE' && !isMine;
+          button.setAttribute(
+            'aria-label',
+            `${seat.label}: ${seat.status.toLowerCase()}${isMine ? ', held by you' : ''}`
+          );
+          button.addEventListener('click', () => holdSeat(seat));
+          el.grid.appendChild(button);
+        }
+      }
+
+      function renderStats(stats) {
+        const entries = [
+          ['Available', stats.seats.AVAILABLE, null],
+          ['Held', stats.seats.HELD, null],
+          ['Booked', stats.seats.BOOKED, null],
+          ['Confirmed bookings', stats.bookings.CONFIRMED, null],
+          ['Expired holds', stats.bookings.EXPIRED, null],
+          ['Duplicate live holds', stats.duplicate_pending_seats, 'invert'],
+          ['Oversold seats', stats.oversold_seats, 'invert'],
+        ];
+
+        el.stats.replaceChildren();
+        for (const [label, value, kind] of entries) {
+          const dt = document.createElement('dt');
+          dt.textContent = label;
+          const dd = document.createElement('dd');
+          dd.textContent = value;
+          if (kind === 'invert') dd.className = value > 0 ? 'bad' : 'good';
+          el.stats.append(dt, dd);
+        }
+      }
+
+      async function refresh() {
+        if (!state.eventId) return;
+        try {
+          const [seats, stats] = await Promise.all([
+            api(`/events/${state.eventId}/seats`),
+            api(`/events/${state.eventId}/stats`),
+          ]);
+          if (seats.ok) { state.seats = seats.body; renderSeats(); }
+          if (stats.ok) renderStats(stats.body);
+        } catch (error) {
+          log(`Refresh failed: ${error.message}`);
+        }
+      }
+
+      async function holdSeat(seat) {
+        if (state.hold) {
+          log('You already hold a seat. Confirm or release it first.');
+          return;
+        }
+
+        const path = mode() === 'safe' ? '/bookings/hold' : '/bookings/hold-naive';
+        const res = await post(path, {
+          userId: el.userId.value,
+          eventId: state.eventId,
+          seatId: seat.id,
+        });
+
+        if (res.status === 201) {
+          state.hold = {
+            bookingId: res.body.booking.id,
+            seatId: seat.id,
+            expiresAt: new Date(res.body.expires_at).getTime(),
+          };
+          log(`Held ${seat.label} (booking ${state.hold.bookingId.slice(0, 8)}).`);
+          startCountdown();
+        } else {
+          log(`Hold on ${seat.label} refused (${res.status}): ${res.body?.error ?? ''}`);
+        }
+
+        await refresh();
+      }
+
+      function startCountdown() {
+        clearInterval(state.countdownTimer);
+        el.confirmBtn.disabled = false;
+        el.releaseBtn.disabled = false;
+
+        const tick = () => {
+          if (!state.hold) return;
+          const remaining = Math.max(0, state.hold.expiresAt - Date.now());
+          const seconds = Math.ceil(remaining / 1000);
+          const seat = state.seats.find((s) => s.id === state.hold.seatId);
+          el.holdState.textContent =
+            `Holding ${seat ? seat.label : 'seat ' + state.hold.seatId} — ` +
+            `${seconds}s remaining.`;
+
+          if (remaining === 0) {
+            log('Your hold lapsed. The reaper will return the seat to the pool.');
+            clearHold();
+          }
+        };
+
+        tick();
+        state.countdownTimer = setInterval(tick, 250);
+      }
+
+      function clearHold() {
+        clearInterval(state.countdownTimer);
+        state.hold = null;
+        el.confirmBtn.disabled = true;
+        el.releaseBtn.disabled = true;
+        el.holdState.textContent = 'No active hold. Pick a green seat.';
+        renderSeats();
+      }
+
+      el.confirmBtn.addEventListener('click', async () => {
+        if (!state.hold) return;
+        const path = mode() === 'safe' ? '/bookings/checkout' : '/bookings/checkout-naive';
+        const res = await post(path, {
+          bookingId: state.hold.bookingId,
+          userId: el.userId.value,
+        });
+
+        if (res.status === 200) {
+          log('Booking confirmed.');
+        } else {
+          log(`Checkout refused (${res.status}): ${res.body?.error ?? 'server error'}`);
+        }
+        clearHold();
+        await refresh();
+      });
+
+      el.releaseBtn.addEventListener('click', async () => {
+        if (!state.hold) return;
+        const res = await post('/bookings/release', {
+          bookingId: state.hold.bookingId,
+          userId: el.userId.value,
+        });
+        log(
+          res.status === 200
+            ? 'Hold released; seat is back in the pool.'
+            : `Release refused (${res.status}): ${res.body?.error ?? ''}`
+        );
+        clearHold();
+        await refresh();
+      });
+
+      (async function init() {
+        const events = await api('/events');
+        if (!events.ok || events.body.length === 0) {
+          log('No events found. Run `npm run seed` and reload.');
+          return;
+        }
+        state.eventId = events.body[0].id;
+        log(`Loaded event "${events.body[0].name}".`);
+        await refresh();
+        // Polling keeps this dependency-free; SSE would be the next step.
+        setInterval(refresh, 1000);
+      })();
+    </script>
+  </body>
+</html>

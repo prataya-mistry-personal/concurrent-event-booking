@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.DS_Store
+
+# Local environment. .env.example is the committed template.
+.env
+.env.*
+!.env.example
+
+# Local run artifacts
+srv.log
+srverr.log
+test-output.txt
+
+event-booking.json

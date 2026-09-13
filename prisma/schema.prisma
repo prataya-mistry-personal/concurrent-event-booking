@@ -1,0 +1,82 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SeatStatus {
+  AVAILABLE
+  HELD
+  BOOKED
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  /// A hold that lapsed before checkout. Reached by the reaper or by lazy
+  /// reclaim, and required so an abandoned hold has a terminal state instead of
+  /// sitting as PENDING forever.
+  EXPIRED
+  /// A hold the user released deliberately.
+  CANCELLED
+}
+
+model Event {
+  id          String   @id @default(uuid())
+  name        String
+  total_seats Int
+  start_time  DateTime
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  seats    Seat[]
+  bookings Booking[]
+}
+
+model Seat {
+  id       Int        @id @default(autoincrement())
+  event_id String
+  label    String
+  status   SeatStatus @default(AVAILABLE)
+  version  Int        @default(1)
+
+  event    Event     @relation(fields: [event_id], references: [id], onDelete: Cascade)
+  bookings Booking[]
+
+  // Postgres does not index foreign keys automatically. The seat map and the
+  // availability count both filter on these columns.
+  @@index([event_id, status])
+  // Re-seeding must not silently duplicate a seat label within one event.
+  @@unique([event_id, label])
+}
+
+model Booking {
+  id       String        @id @default(uuid())
+  user_id  String
+  event_id String
+  seat_id  Int
+  status   BookingStatus @default(PENDING)
+
+  /// Fence token matching the Redis lock value. Holding the booking id is not
+  /// enough to release a lock; the caller must present the token that acquired
+  /// it, which makes release safe against a lock that lapsed and was re-taken.
+  hold_token String?
+
+  expires_at DateTime?
+  created_at DateTime  @default(now())
+  updated_at DateTime  @updatedAt
+
+  event Event @relation(fields: [event_id], references: [id], onDelete: Cascade)
+  seat  Seat  @relation(fields: [seat_id], references: [id], onDelete: Cascade)
+
+  @@index([seat_id])
+  // Drives the reaper's sweep for holds past their deadline.
+  @@index([status, expires_at])
+
+  // NOTE: a partial unique index guaranteeing at most one CONFIRMED booking per
+  // seat is added by raw SQL in the migration. Prisma cannot express filtered
+  // unique indexes for Postgres, so it cannot be declared here.
+}
